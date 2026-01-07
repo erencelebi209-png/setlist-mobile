@@ -1,0 +1,180 @@
+import { onAuthStateChanged, signInAnonymously, type User } from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import React, { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { auth, db } from '../firebase/config';
+
+const DEBUG_LOGS = __DEV__ && process.env.EXPO_PUBLIC_DEBUG_LOGS === '1';
+
+// Web tarafındaki UserProfile'ın sadeleştirilmiş mobil kopyası
+export interface UserProfile {
+  uid: string;
+  name: string;
+  age: number;
+  gender: string;
+  country: string;
+  city: string;
+  photos: string[];
+  genres: string[];
+  bpmPreference: string;
+  afterParty: boolean;
+  premium: boolean;
+  weeklySuperlikeCount?: number;
+  weeklySuperlikeWeekKey?: string;
+  bio?: string;
+  minAge?: number;
+  maxAge?: number;
+  maxDistanceKm?: number;
+  preferredGender?: 'female' | 'male' | 'both';
+  dailySwipeCount: number;
+  lastSwipeDate: string;
+  maxDailySwipes: number;
+  verified?: boolean;
+  verificationStatus?: 'none' | 'pending' | 'verified' | 'rejected';
+  verificationUpdatedAt?: number;
+}
+
+interface AuthContextValue {
+  firebaseUser: User | null;
+  profile: UserProfile | null;
+  loading: boolean;
+}
+
+const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+export const AuthProvider = ({ children }: { children: ReactNode }) => {
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      try {
+        if (DEBUG_LOGS) {
+          // eslint-disable-next-line no-console
+          console.log('[auth] onAuthStateChanged', {
+            uid: user?.uid ?? null,
+            isAnonymous: (user as any)?.isAnonymous ?? null,
+          });
+        }
+
+        // Kullanıcı yoksa anonim giriş yap
+        if (!user) {
+          try {
+            const cred = await signInAnonymously(auth);
+            user = cred.user;
+          } catch (e) {
+            if (DEBUG_LOGS) {
+              // eslint-disable-next-line no-console
+              console.log('[auth] signInAnonymously failed', {
+                code: (e as any)?.code,
+                message: (e as any)?.message,
+              });
+            }
+            throw e;
+          }
+        }
+
+        if (!user) {
+          setFirebaseUser(null);
+          setProfile(null);
+          setLoading(false);
+          return;
+        }
+
+        // Firestore istekleri başlamadan önce token'ın hazır olduğundan emin ol.
+        // Bazı cihazlarda auth state geliyor ama token henüz hazır değilken yapılan ilk istekler
+        // permission-denied (request.auth == null) ile dönebiliyor.
+        await user.getIdToken();
+
+        // Token hazır olmadan firebaseUser set etmiyoruz; böylece ekranlardaki listener'lar
+        // auth hazır olmadan çalışmaya başlamaz.
+        setFirebaseUser(user);
+
+        if (DEBUG_LOGS) {
+          // eslint-disable-next-line no-console
+          console.log('[auth] active user', {
+            uid: user.uid,
+            isAnonymous: (user as any)?.isAnonymous ?? null,
+          });
+        }
+
+        const ref = doc(db, 'users', user.uid);
+        const snap = await getDoc(ref);
+        if (snap.exists()) {
+          const data = snap.data() as UserProfile;
+
+          // Mobil uygulamada premium alanlarını normalize ediyoruz.
+          // (Premium test edilebilsin diye premium'u artık zorla kapatmıyoruz.)
+          if (data.premium === true) {
+            const desiredMax = 9999;
+            if (data.maxDailySwipes !== desiredMax) {
+              await setDoc(
+                ref,
+                {
+                  maxDailySwipes: desiredMax,
+                },
+                { merge: true },
+              );
+              data.maxDailySwipes = desiredMax;
+            }
+          }
+
+          setProfile(data);
+        } else {
+          // Eğer profil yoksa basit bir mock profil oluştur
+          const today = new Date().toISOString().slice(0, 10);
+          const now = new Date();
+          const weekKey = `${now.getUTCFullYear()}-W00`;
+          const initialProfile: UserProfile = {
+            uid: user.uid,
+            name: 'Mobile Raver',
+            age: 25,
+            gender: 'N/A',
+            country: 'TR',
+            city: 'Istanbul',
+            photos: [],
+            genres: [],
+            bpmPreference: '130-140',
+            afterParty: false,
+            premium: false,
+            weeklySuperlikeCount: 0,
+            weeklySuperlikeWeekKey: weekKey,
+            dailySwipeCount: 0,
+            lastSwipeDate: today,
+            maxDailySwipes: 20,
+            verified: false,
+            verificationStatus: 'none',
+            verificationUpdatedAt: Date.now(),
+          };
+          await setDoc(ref, initialProfile, { merge: true });
+          setProfile(initialProfile);
+        }
+      } catch (e) {
+        if (DEBUG_LOGS) {
+          console.warn('Failed to init auth/profile', e);
+        }
+        setProfile(null);
+      } finally {
+        setLoading(false);
+      }
+    });
+
+    return () => unsub();
+  }, []);
+
+  return (
+    <AuthContext.Provider value={{ firebaseUser, profile, loading }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
+  return ctx;
+};
+
+export default function AuthContextRoute() {
+  return null;
+}
