@@ -10,7 +10,7 @@ import { Platform } from 'react-native';
 // Bu değerleri app.config.(js|ts) veya .env içinde EXPO_PUBLIC_* olarak tanımlaman gerekiyor.
 // Örn: EXPO_PUBLIC_FIREBASE_API_KEY=... vb.
 
-const firebaseConfig: FirebaseOptions = {
+export const firebaseConfig: FirebaseOptions = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY || 'AIzaSyAUWN0T_QM8SE9JaWaH1POKFVEqYo_KEus',
   authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN || 'setlist-87cd0.firebaseapp.com',
   projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID || 'setlist-87cd0',

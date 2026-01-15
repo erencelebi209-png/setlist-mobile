@@ -1,10 +1,10 @@
-import { onAuthStateChanged, signInAnonymously, type User } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import auth, { type FirebaseAuthTypes } from '@react-native-firebase/auth';
+import firestore from '@react-native-firebase/firestore';
 import React, { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { auth, db } from '../firebase/config';
 
 const DEBUG_LOGS = __DEV__ && process.env.EXPO_PUBLIC_DEBUG_LOGS === '1';
 
+// Web tarafındaki UserProfile’ın sadeleştirilmiş mobil kopyası
 // Web tarafındaki UserProfile'ın sadeleştirilmiş mobil kopyası
 export interface UserProfile {
   uid: string;
@@ -34,20 +34,35 @@ export interface UserProfile {
 }
 
 interface AuthContextValue {
-  firebaseUser: User | null;
+  firebaseUser: FirebaseAuthTypes.User | null;
   profile: UserProfile | null;
   loading: boolean;
+  signIn: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string) => Promise<void>;
+  signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseAuthTypes.User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const signIn = async (email: string, password: string) => {
+    await auth().signInWithEmailAndPassword(email.trim(), password);
+  };
+
+  const signUp = async (email: string, password: string) => {
+    await auth().createUserWithEmailAndPassword(email.trim(), password);
+  };
+
+  const signOut = async () => {
+    await auth().signOut();
+  };
+
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (user) => {
+    const unsub = auth().onAuthStateChanged(async (user: FirebaseAuthTypes.User | null) => {
       try {
         if (DEBUG_LOGS) {
           // eslint-disable-next-line no-console
@@ -55,23 +70,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             uid: user?.uid ?? null,
             isAnonymous: (user as any)?.isAnonymous ?? null,
           });
-        }
-
-        // Kullanıcı yoksa anonim giriş yap
-        if (!user) {
-          try {
-            const cred = await signInAnonymously(auth);
-            user = cred.user;
-          } catch (e) {
-            if (DEBUG_LOGS) {
-              // eslint-disable-next-line no-console
-              console.log('[auth] signInAnonymously failed', {
-                code: (e as any)?.code,
-                message: (e as any)?.message,
-              });
-            }
-            throw e;
-          }
         }
 
         if (!user) {
@@ -98,9 +96,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           });
         }
 
-        const ref = doc(db, 'users', user.uid);
-        const snap = await getDoc(ref);
-        if (snap.exists()) {
+        const ref = firestore().collection('users').doc(user.uid);
+        const snap = await ref.get();
+        if (snap.exists) {
           const data = snap.data() as UserProfile;
 
           // Mobil uygulamada premium alanlarını normalize ediyoruz.
@@ -108,8 +106,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           if (data.premium === true) {
             const desiredMax = 9999;
             if (data.maxDailySwipes !== desiredMax) {
-              await setDoc(
-                ref,
+              await ref.set(
                 {
                   maxDailySwipes: desiredMax,
                 },
@@ -146,7 +143,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             verificationStatus: 'none',
             verificationUpdatedAt: Date.now(),
           };
-          await setDoc(ref, initialProfile, { merge: true });
+          await ref.set(initialProfile, { merge: true });
           setProfile(initialProfile);
         }
       } catch (e) {
@@ -163,7 +160,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ firebaseUser, profile, loading }}>
+    <AuthContext.Provider value={{ firebaseUser, profile, loading, signIn, signUp, signOut }}>
       {children}
     </AuthContext.Provider>
   );

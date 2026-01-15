@@ -1,6 +1,6 @@
+import firestore from '@react-native-firebase/firestore';
 import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
-import { collection, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import {
     FlatList,
@@ -12,7 +12,6 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { db } from '../../firebase/config';
 import { sendLike } from '../../services/swipeService';
 import { useAuth } from '../AuthContext';
 import { useNotifications } from '../NotificationsContext';
@@ -66,16 +65,15 @@ export default function LikesScreen() {
       return;
     }
 
-    const likesRef = collection(db, 'likes');
+    const likesRef = firestore().collection('likes');
 
-    const qIncoming = query(likesRef, where('to', '==', firebaseUser.uid), orderBy('createdAt', 'desc'));
-    const qOutgoing = query(likesRef, where('from', '==', firebaseUser.uid), orderBy('createdAt', 'desc'));
+    const qIncoming = likesRef.where('to', '==', firebaseUser.uid).orderBy('createdAt', 'desc');
+    const qOutgoing = likesRef.where('from', '==', firebaseUser.uid).orderBy('createdAt', 'desc');
 
-    const unsubIncoming = onSnapshot(
-      qIncoming,
-      (snap) => {
+    const unsubIncoming = qIncoming.onSnapshot(
+      (snap: any) => {
         const items: MockLiker[] = [];
-        snap.forEach((d) => {
+        snap.docs.forEach((d: any) => {
           const data = d.data() as LikeDoc;
           const p = (data as any).fromProfile ?? null;
           const fromUid = String(data.from ?? '');
@@ -99,11 +97,10 @@ export default function LikesScreen() {
       },
     );
 
-    const unsubOutgoing = onSnapshot(
-      qOutgoing,
-      (snap) => {
+    const unsubOutgoing = qOutgoing.onSnapshot(
+      (snap: any) => {
         const items: MockLiker[] = [];
-        snap.forEach((d) => {
+        snap.docs.forEach((d: any) => {
           const data = d.data() as LikeDoc;
           const p = data.toProfile ?? null;
           const toUid = String(data.to ?? '');
@@ -249,7 +246,7 @@ export default function LikesScreen() {
                   setShowPremium(false);
                 }}
               >
-                <Text style={styles.modalLikeText}>Premium'a geç</Text>
+                <Text style={styles.modalLikeText}>Premium&apos;a geç</Text>
               </TouchableOpacity>
             </View>
           </View>

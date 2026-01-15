@@ -1,15 +1,4 @@
-import type { DocumentData, FirestoreError, QuerySnapshot } from 'firebase/firestore';
-import {
-    collection,
-    doc,
-    onSnapshot,
-    orderBy,
-    query,
-    serverTimestamp,
-    setDoc,
-    where,
-    writeBatch,
-} from 'firebase/firestore';
+import firestore from '@react-native-firebase/firestore';
 import React, { useEffect, useRef, useState } from 'react';
 import {
     FlatList,
@@ -21,7 +10,6 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
-import { auth, db } from '../../firebase/config';
 import { useAuth } from '../AuthContext';
 import { useMessages, type MobileMessage } from '../MessagesContext';
 import { useNotifications } from '../NotificationsContext';
@@ -63,11 +51,11 @@ export default function MessagesScreen() {
   useEffect(() => {
     if (!firebaseUser) return;
 
-    const matchesRef = collection(db, 'matches');
-    const qUsers = query(matchesRef, where('users', 'array-contains', firebaseUser.uid));
-    const qUserIds = query(matchesRef, where('userIds', 'array-contains', firebaseUser.uid));
-    const qUserA = query(matchesRef, where('userA', '==', firebaseUser.uid));
-    const qUserB = query(matchesRef, where('userB', '==', firebaseUser.uid));
+    const matchesRef = firestore().collection('matches');
+    const qUsers = matchesRef.where('users', 'array-contains', firebaseUser.uid);
+    const qUserIds = matchesRef.where('userIds', 'array-contains', firebaseUser.uid);
+    const qUserA = matchesRef.where('userA', '==', firebaseUser.uid);
+    const qUserB = matchesRef.where('userB', '==', firebaseUser.uid);
 
     const mapDocToItem = (docSnap: any): MatchItem => {
       const data = docSnap.data() as {
@@ -131,35 +119,19 @@ export default function MessagesScreen() {
     const unsubs: Array<() => void> = [];
 
     const subscribeQuery = (qAny: any, label: string) => {
-      const unsub = onSnapshot(
-        qAny,
-        (snap: QuerySnapshot<DocumentData>) => upsertFromSnapshot(snap, label),
-        (err: FirestoreError) => {
-          const code = String(err?.code ?? 'unknown');
+      const unsub = qAny.onSnapshot(
+        (snap: any) => upsertFromSnapshot(snap, label),
+        (err: any) => {
+          const code = String((err as any)?.code ?? 'unknown');
           const warnKey = `matches:${code}:${label}`;
           if (cancelled) return;
-
-          if (String(err?.code) === 'permission-denied') {
-            if (DEBUG_LOGS && !warnedRef.current[warnKey]) {
-              warnedRef.current[warnKey] = true;
-              console.warn('matches listener failed', {
-                label,
-                code,
-                message: err?.message,
-                uid: firebaseUser.uid,
-              });
-            }
-            // eslint-disable-next-line @typescript-eslint/no-floating-promises
-            auth.currentUser?.getIdToken(true).catch(() => undefined);
-            return;
-          }
 
           if (DEBUG_LOGS && !warnedRef.current[warnKey]) {
             warnedRef.current[warnKey] = true;
             console.warn('matches listener failed', {
               label,
               code,
-              message: err?.message,
+              message: (err as any)?.message,
               uid: firebaseUser.uid,
             });
           }
@@ -193,10 +165,9 @@ export default function MessagesScreen() {
     const unsubs: Array<() => void> = [];
 
     matches.forEach((m) => {
-      const receiptRef = doc(db, 'matches', m.id, 'readReceipts', firebaseUser.uid);
-      const unsub = onSnapshot(
-        receiptRef,
-        (snap) => {
+      const receiptRef = firestore().collection('matches').doc(m.id).collection('readReceipts').doc(firebaseUser.uid);
+      const unsub = receiptRef.onSnapshot(
+        (snap: any) => {
           const data = snap.data() as { lastReadAt?: any } | undefined;
           const ms =
             typeof data?.lastReadAt?.toMillis === 'function'
@@ -266,12 +237,14 @@ export default function MessagesScreen() {
       return;
     }
 
-    const msgsRef = collection(db, 'matches', selectedId, 'messages');
-    const qMsgs = query(msgsRef, orderBy('createdAt', 'asc'));
+    const qMsgs = firestore()
+      .collection('matches')
+      .doc(selectedId)
+      .collection('messages')
+      .orderBy('createdAt', 'asc');
 
-    const unsub = onSnapshot(
-      qMsgs,
-      (snap: QuerySnapshot<DocumentData>) => {
+    const unsub = qMsgs.onSnapshot(
+      (snap: any) => {
         const docs: MobileMessage[] = snap.docs.map((d: any) => {
           const data = d.data() as { from?: string; text?: string; createdAt?: any };
           const createdAtMs =
@@ -286,28 +259,32 @@ export default function MessagesScreen() {
         setRemoteMessages(docs);
 
         // Bu sohbeti okundu say
-        const receiptRef = doc(db, 'matches', selectedId, 'readReceipts', firebaseUser.uid);
+        const receiptRef = firestore()
+          .collection('matches')
+          .doc(selectedId)
+          .collection('readReceipts')
+          .doc(firebaseUser.uid);
         // eslint-disable-next-line @typescript-eslint/no-floating-promises
-        setDoc(receiptRef, { lastReadAt: Date.now() }, { merge: true }).catch((e) => {
+        receiptRef.set({ lastReadAt: Date.now() }, { merge: true }).catch((e: any) => {
           if (DEBUG_LOGS) {
             console.warn('Failed to write readReceipt', {
-              code: (e as any)?.code,
-              message: (e as any)?.message,
+              code: e?.code,
+              message: e?.message,
               matchId: selectedId,
               uid: firebaseUser.uid,
             });
           }
         });
       },
-      (err: FirestoreError) => {
+      (err: any) => {
         if (DEBUG_LOGS) {
-          const code = String((err as any)?.code ?? 'unknown');
+          const code = String(err?.code ?? 'unknown');
           const warnKey = `messages:${selectedId}:${code}`;
           if (!warnedRef.current[warnKey]) {
             warnedRef.current[warnKey] = true;
             console.warn('messages listener failed', {
               code,
-              message: (err as any)?.message,
+              message: err?.message,
               uid: firebaseUser.uid,
               matchId: selectedId,
             });
@@ -333,9 +310,10 @@ export default function MessagesScreen() {
         const otherUid = currentMatch?.otherUid ?? null;
         if (!otherUid) throw new Error('MATCH_OTHER_UID_NOT_FOUND');
 
-        const matchRef = doc(db, 'matches', selectedId);
-        const msgRef = doc(collection(db, 'matches', selectedId, 'messages'));
-        const batch = writeBatch(db);
+        const matchRef = firestore().collection('matches').doc(selectedId);
+        const msgRef = matchRef.collection('messages').doc();
+        const batch = firestore().batch();
+
         batch.set(
           matchRef,
           {
@@ -347,19 +325,21 @@ export default function MessagesScreen() {
               [myUid]: 'You',
               [otherUid]: String(currentMatch?.name ?? 'Match'),
             },
-            createdAt: serverTimestamp(),
+            createdAt: firestore.FieldValue.serverTimestamp(),
             lastMessageAt: Date.now(),
             lastMessageFrom: myUid,
           },
           { merge: true },
         );
+
         batch.set(msgRef, {
           from: myUid,
           text,
           users: [myUid, otherUid],
           userIds: [myUid, otherUid],
-          createdAt: serverTimestamp(),
+          createdAt: firestore.FieldValue.serverTimestamp(),
         });
+
         await batch.commit();
       } catch (e) {
         if (DEBUG_LOGS) {

@@ -1,10 +1,9 @@
+ import firestore from '@react-native-firebase/firestore';
 import { Camera, CameraView } from 'expo-camera';
 import { useRouter } from 'expo-router';
-import { doc, setDoc } from 'firebase/firestore';
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { db } from '../firebase/config';
 import { useAuth } from './AuthContext';
 
 export default function VerifySelfieScreen() {
@@ -45,9 +44,7 @@ export default function VerifySelfieScreen() {
     console.log('Selfie upload stub, uri:', photoUri);
 
     try {
-      const ref = doc(db, 'users', firebaseUser.uid);
-      await setDoc(
-        ref,
+      await firestore().collection('users').doc(firebaseUser.uid).set(
         {
           verificationStatus: 'pending',
           verificationUpdatedAt: Date.now(),
@@ -120,7 +117,7 @@ export default function VerifySelfieScreen() {
               onPress={handleSendSelfie}
               disabled={loading}
             >
-              <Text style={styles.primaryButtonText}>Selfie'yi gönder</Text>
+              <Text style={styles.primaryButtonText}>Selfie&apos;yi gönder</Text>
             </TouchableOpacity>
           </>
         ) : (

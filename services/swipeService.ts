@@ -1,6 +1,5 @@
-import { collection, doc, getDoc, getDocs, limit, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, writeBatch } from 'firebase/firestore';
+import firestore, { type FirebaseFirestoreTypes } from '@react-native-firebase/firestore';
 import type { UserProfile } from '../app/AuthContext';
-import { db } from '../firebase/config';
 
 const DEBUG_LOGS = __DEV__ && process.env.EXPO_PUBLIC_DEBUG_LOGS === '1';
 
@@ -30,43 +29,33 @@ const getWeekKey = (d: Date) => {
 };
 
 export const fetchSwipeCandidates = async (currentUser: UserProfile): Promise<UserProfile[]> => {
-  const usersRef = collection(db, 'users');
-  const constraints: any[] = [];
+  let q: FirebaseFirestoreTypes.Query<FirebaseFirestoreTypes.DocumentData> = firestore().collection('users');
 
-  // Keep constraints minimal to avoid empty results when optional fields don't exist.
-  // Apply optional filters only when the current user has that field.
   if (currentUser.country) {
-    constraints.push(where('country', '==', currentUser.country));
+    q = q.where('country', '==', currentUser.country);
   }
 
   if (currentUser.premium) {
     if (currentUser.city) {
-      constraints.push(where('city', '==', currentUser.city));
+      q = q.where('city', '==', currentUser.city);
     }
     if (typeof currentUser.age === 'number') {
       const minAge = currentUser.age - 3;
       const maxAge = currentUser.age + 3;
-      constraints.push(where('age', '>=', minAge));
-      constraints.push(where('age', '<=', maxAge));
+      q = q.where('age', '>=', minAge).where('age', '<=', maxAge);
     }
   }
 
-  let snap;
+  let snap: FirebaseFirestoreTypes.QuerySnapshot<FirebaseFirestoreTypes.DocumentData>;
   try {
-    const q = query(usersRef, ...constraints, limit(50));
-    snap = await getDocs(q);
+    snap = await q.limit(50).get();
   } catch {
-    // If composite indexes/filters fail, fall back to a broad query.
-    snap = await getDocs(query(usersRef, limit(50)));
+    snap = await firestore().collection('users').limit(50).get();
   }
-  const candidates: UserProfile[] = [];
 
-  snap.forEach((d) => {
-    const data = d.data() as UserProfile;
-    if (data.uid !== currentUser.uid) {
-      candidates.push(data);
-    }
-  });
+  const candidates: UserProfile[] = snap.docs
+    .map((d) => d.data() as UserProfile)
+    .filter((u) => u.uid !== currentUser.uid);
 
   // Prefer boosted profiles first if the field exists.
   candidates.sort((a: any, b: any) => {
@@ -84,10 +73,10 @@ export const sendLike = async (
   type: LikeType,
   toProfile?: LikeProfileSnapshot,
 ): Promise<boolean> => {
-  const userRef = doc(db, 'users', fromUid);
-  const userSnap = await getDoc(userRef);
+  const userRef = firestore().collection('users').doc(fromUid);
+  const userSnap = await userRef.get();
 
-  if (!userSnap.exists()) {
+  if (!userSnap.exists) {
     throw new Error('USER_NOT_FOUND');
   }
 
@@ -120,10 +109,13 @@ export const sendLike = async (
       throw new Error('SUPERLIKE_LIMIT_REACHED');
     }
 
-    await updateDoc(userRef, {
+    await userRef.set(
+      {
       weeklySuperlikeWeekKey: weekKey,
       weeklySuperlikeCount: count + 1,
-    });
+      },
+      { merge: true },
+    );
   }
 
   if (lastSwipeDate !== today) {
@@ -135,13 +127,16 @@ export const sendLike = async (
     throw new Error('SWIPE_LIMIT_REACHED');
   }
 
-  await updateDoc(userRef, {
+  await userRef.set(
+    {
     dailySwipeCount: dailySwipeCount + 1,
     lastSwipeDate,
-  });
+    },
+    { merge: true },
+  );
 
   const likeId = `${fromUid}_${toUid}`;
-  const likeRef = doc(db, 'likes', likeId);
+  const likeRef = firestore().collection('likes').doc(likeId);
 
   const fromProfile: LikeProfileSnapshot = {
     name: user.name,
@@ -154,15 +149,14 @@ export const sendLike = async (
 
   // Like dokümanı daha önce oluşmuş olabilir; merge ile idempotent yaz.
   // (Rules tarafında update izni yoksa permission-denied olur; rules'u da buna göre güncelleyeceğiz.)
-  await setDoc(
-    likeRef,
+  await likeRef.set(
     {
       from: fromUid,
       to: toUid,
       type,
       fromProfile,
       toProfile: toProfile ?? null,
-      createdAt: serverTimestamp(),
+      createdAt: firestore.FieldValue.serverTimestamp(),
     },
     { merge: true },
   );
@@ -170,16 +164,16 @@ export const sendLike = async (
   // Mutual-like => create match immediately.
   // If user B likes user A and A already liked B, we create matches/{sortedUidA_sortedUidB}.
   const reverseLikeId = `${toUid}_${fromUid}`;
-  const reverseLikeRef = doc(db, 'likes', reverseLikeId);
-  const reverseSnap = await getDoc(reverseLikeRef);
-  if (reverseSnap.exists()) {
+  const reverseLikeRef = firestore().collection('likes').doc(reverseLikeId);
+  const reverseSnap = await reverseLikeRef.get();
+  if (reverseSnap.exists) {
     const matchId = [fromUid, toUid].sort().join('_');
-    const matchRef = doc(db, 'matches', matchId);
+    const matchRef = firestore().collection('matches').doc(matchId);
 
     let otherName = toProfile?.name ?? toUid;
     try {
-      const otherSnap = await getDoc(doc(db, 'users', toUid));
-      if (otherSnap.exists()) {
+      const otherSnap = await firestore().collection('users').doc(toUid).get();
+      if (otherSnap.exists) {
         const otherUser = otherSnap.data() as Partial<UserProfile>;
         if (otherUser?.name) otherName = String(otherUser.name);
       }
@@ -187,9 +181,7 @@ export const sendLike = async (
       // ignore
     }
 
-    const batch = writeBatch(db);
-    batch.set(
-      matchRef,
+    await matchRef.set(
       {
         userA: fromUid,
         userB: toUid,
@@ -199,13 +191,12 @@ export const sendLike = async (
           [fromUid]: String(fromProfile?.name ?? 'You'),
           [toUid]: String(otherName),
         },
-        createdAt: serverTimestamp(),
+        createdAt: firestore.FieldValue.serverTimestamp(),
         lastMessageAt: Date.now(),
         lastMessageFrom: fromUid,
       },
       { merge: true },
     );
-    await batch.commit();
     return true;
   }
 
@@ -214,33 +205,33 @@ export const sendLike = async (
 };
 
 export const listenMatches = (uid: string, cb: (matchUserIds: string[]) => void) => {
-  const matchesRef = collection(db, 'matches');
-  const q = query(matchesRef, where('users', 'array-contains', uid));
   let warned = false;
-  return onSnapshot(
-    q,
-    (snap) => {
-      const ids: string[] = [];
-      snap.forEach((d) => {
-        const data = d.data() as { users: string[] };
-        if (Array.isArray(data.users)) {
-          const otherId = data.users.find((u) => u !== uid);
-          if (otherId) ids.push(otherId);
-        }
-      });
-      cb(ids);
-    },
-    (err) => {
-      if (DEBUG_LOGS && !warned) {
-        warned = true;
-        console.warn('listenMatches failed', {
-          code: (err as any)?.code,
-          message: (err as any)?.message,
-          uid,
+  return firestore()
+    .collection('matches')
+    .where('users', 'array-contains', uid)
+    .onSnapshot(
+      (snap) => {
+        const ids: string[] = [];
+        snap.docs.forEach((d) => {
+          const data = d.data() as { users?: string[] };
+          if (Array.isArray(data.users)) {
+            const otherId = data.users.find((u) => u !== uid);
+            if (otherId) ids.push(otherId);
+          }
         });
-      }
-    },
-  );
+        cb(ids);
+      },
+      (err) => {
+        if (DEBUG_LOGS && !warned) {
+          warned = true;
+          console.warn('listenMatches failed', {
+            code: (err as any)?.code,
+            message: (err as any)?.message,
+            uid,
+          });
+        }
+      },
+    );
 };
 
 export const fetchUsersByIds = async (ids: string[]): Promise<UserProfile[]> => {
@@ -250,9 +241,8 @@ export const fetchUsersByIds = async (ids: string[]): Promise<UserProfile[]> => 
 
   await Promise.all(
     ids.map(async (id) => {
-      const ref = doc(db, 'users', id);
-      const snap = await getDoc(ref);
-      if (snap.exists()) {
+      const snap = await firestore().collection('users').doc(id).get();
+      if (snap.exists) {
         users.push(snap.data() as UserProfile);
       }
     }),
@@ -262,12 +252,10 @@ export const fetchUsersByIds = async (ids: string[]): Promise<UserProfile[]> => 
 };
 
 export const fetchWhoLikedYou = async (uid: string): Promise<UserProfile[]> => {
-  const likesRef = collection(db, 'likes');
-  const q = query(likesRef, where('to', '==', uid));
-  const snap = await getDocs(q);
+  const snap = await firestore().collection('likes').where('to', '==', uid).get();
 
   const likerIds = new Set<string>();
-  snap.forEach((d) => {
+  snap.docs.forEach((d) => {
     const data = d.data() as { from?: string };
     if (data.from) likerIds.add(data.from);
   });

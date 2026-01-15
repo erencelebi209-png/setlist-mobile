@@ -1,5 +1,5 @@
+import firestore from '@react-native-firebase/firestore';
 import { useRouter } from 'expo-router';
-import { doc, setDoc } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import {
     Alert,
@@ -13,7 +13,6 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { db } from '../../firebase/config';
 import { useAuth } from '../AuthContext';
 
 type PreferredGender = 'female' | 'male' | 'both';
@@ -22,7 +21,7 @@ const ALL_GENRES = ['Techno', 'Hard Techno', 'House', 'Minimal', 'Psy', 'Trance'
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { profile, firebaseUser, loading } = useAuth();
+  const { profile, firebaseUser, loading, signOut } = useAuth();
   const [name, setName] = useState('Setlist User');
   const [genres, setGenres] = useState<string[]>(['Techno']);
   const [photos, setPhotos] = useState<string[]>([
@@ -99,9 +98,7 @@ export default function ProfileScreen() {
     setSaving(true);
     setSaved(false);
     try {
-      const ref = doc(db, 'users', firebaseUser.uid);
-      await setDoc(
-        ref,
+      await firestore().collection('users').doc(firebaseUser.uid).set(
         {
           name,
           photos,
@@ -133,16 +130,18 @@ export default function ProfileScreen() {
     const next = !premium;
     setPremium(next);
 
-    const ref = doc(db, 'users', firebaseUser.uid);
     // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    setDoc(
-      ref,
-      {
-        premium: next,
-        maxDailySwipes: next ? 9999 : 20,
-      },
-      { merge: true },
-    ).catch(() => undefined);
+    firestore()
+      .collection('users')
+      .doc(firebaseUser.uid)
+      .set(
+        {
+          premium: next,
+          maxDailySwipes: next ? 9999 : 20,
+        },
+        { merge: true },
+      )
+      .catch(() => undefined);
   };
 
   return (
@@ -412,6 +411,19 @@ export default function ProfileScreen() {
             </Text>
           </TouchableOpacity>
           {saved && <Text style={styles.savedBadge}>Kaydedildi</Text>}
+        </View>
+
+        <View style={styles.saveRow}>
+          <TouchableOpacity
+            style={styles.logoutBtn}
+            onPress={() => {
+              // eslint-disable-next-line @typescript-eslint/no-floating-promises
+              signOut();
+            }}
+            disabled={loading}
+          >
+            <Text style={styles.logoutText}>{loading ? '...' : 'Çıkış yap'}</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -786,5 +798,19 @@ const styles = StyleSheet.create({
   savedBadge: {
     color: '#22d3ee',
     fontSize: 11,
+  },
+  logoutBtn: {
+    flex: 1,
+    borderRadius: 14,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(15,23,42,0.9)',
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.9)',
+    alignItems: 'center',
+  },
+  logoutText: {
+    color: '#e5e7eb',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });
