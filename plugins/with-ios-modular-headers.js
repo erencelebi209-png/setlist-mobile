@@ -2,6 +2,19 @@ const { withDangerousMod } = require('@expo/config-plugins');
 const fs = require('fs');
 const path = require('path');
 
+function hasPodDeclaration(podfileContents, podName) {
+  const re = new RegExp(`^\\s*pod\\s+['\"]${podName}['\"]\\b`, 'm');
+  return re.test(podfileContents);
+}
+
+function hasModularHeadersDeclaration(podfileContents, podName) {
+  const re = new RegExp(
+    `^\\s*pod\\s+['\"]${podName}['\"][^\\n]*:modular_headers\\s*=>\\s*true`,
+    'm'
+  );
+  return re.test(podfileContents);
+}
+
 function removeInjectedGlobalModularHeaders(podfileContents) {
   const lines = podfileContents.split(/\r?\n/);
   const filtered = [];
@@ -23,12 +36,21 @@ function ensureSelectiveModularHeaders(podfileContents) {
   const targetIndent = targetIndentMatch ? targetIndentMatch[1] : '';
   const podIndent = `${targetIndent}  `;
 
-  const want = [
-    `${podIndent}pod 'GoogleUtilities', :modular_headers => true`,
-    `${podIndent}pod 'FirebaseCoreInternal', :modular_headers => true`,
+  const wantPods = [
+    'GoogleUtilities',
+    'FirebaseCore',
+    'FirebaseCoreExtension',
+    'FirebaseCoreInternal',
+    'FirebaseAuthInterop',
+    'FirebaseAppCheckInterop',
+    'RecaptchaInterop',
+    'FirebaseFirestoreInternal',
   ];
 
-  const toInsert = want.filter((w) => !podfileContents.includes(w.trim()));
+  const toInsert = wantPods
+    .filter((podName) => !hasModularHeadersDeclaration(podfileContents, podName))
+    .filter((podName) => !hasPodDeclaration(podfileContents, podName))
+    .map((podName) => `${podIndent}pod '${podName}', :modular_headers => true`);
   if (toInsert.length === 0) return podfileContents;
 
   lines.splice(targetIdx + 1, 0, ...toInsert);
